@@ -14,6 +14,7 @@ static char *buffer;
 //We can do it in bigger chunks. Each page (or bounds) covers 4kb of data. 
 
 /* --- PRINTF_BYTE_TO_BINARY macro's --- */
+
 #define PRINTF_BINARY_PATTERN_INT8 "%c%c%c%c%c%c%c%c"
 #define PRINTF_BYTE_TO_BINARY_INT8(i)    \
     (((i) & 0x80ll) ? '1' : '0'), \
@@ -38,6 +39,10 @@ static char *buffer;
 #define PRINTF_BYTE_TO_BINARY_INT64(i) \
     PRINTF_BYTE_TO_BINARY_INT32((i) >> 32), PRINTF_BYTE_TO_BINARY_INT32(i)
 /* --- end macros --- */
+
+struct bound_t_struct{ /*This structure stores the upper and lower bounds*/
+    size_t upper, lower;
+};
 
 size_t get_boundt_number(size_t virtual){
     return (virtual >> PAGE_NUM_BITS);
@@ -91,19 +96,31 @@ size_t getAddr (void * s){
     return int_value;
 }
 
+struct bound_t_struct * create_table(){
+    struct bound_t_struct * res = malloc(sizeof(struct bound_t_struct) * 32);
+    return res;
+}
+
 int
 main(int argc, char *argv[])
 {
-
     int real_prot = PROT_READ|PROT_WRITE;
     //int pkey = pkey_alloc(0, PKEY_DISABLE_WRITE);
     //need to set the pkey?
 
-    char *boundt_ptr, *boundd_ptr;
+    struct bound_t_struct test_struct = {145, 567};
+    printf("The size of the test obect is %d", sizeof(test_struct));
+
+    struct bound_t_struct * ptr_table = create_table();
+
+    ptr_table[12].upper = 126;
+    ptr_table[12].lower = 130;
+
+    /*char *boundt_ptr, *boundd_ptr;
     boundt_ptr = mmap(NULL, METADATA_SIZE, real_prot, MAP_ANONYMOUS|MAP_PRIVATE, -1, 0);
     assert(boundt_ptr != MAP_FAILED);
     boundd_ptr = mmap(NULL, METADATA_SIZE, real_prot, MAP_ANONYMOUS|MAP_PRIVATE, -1, 0);
-    assert(boundd_ptr != MAP_FAILED);
+    assert(boundd_ptr != MAP_FAILED);*/
     //int ret = pkey_mprotect(ptr, PAGE_SIZE, real_prot, pkey);
 
     //pkey_set(pkey, PKEY_DISABLE_WRITE);
@@ -155,10 +172,11 @@ main(int argc, char *argv[])
 
 
 
-    int err_t = munmap(boundt_ptr, METADATA_SIZE);
-    int err_d = munmap(boundd_ptr, METADATA_SIZE);
-    assert(err_t >= 0);
-    assert(err_d >= 0);
+   // int err_t = munmap(boundt_ptr, METADATA_SIZE);
+    //int err_d = munmap(boundd_ptr, METADATA_SIZE);
+    //assert(err_t >= 0);
+    //assert(err_d >= 0);
+    free(ptr_table);
 
 
     //pkey_set(pkey, 0);
