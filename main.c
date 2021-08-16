@@ -1,14 +1,17 @@
 #define _GNU_SOURCE
-#include <sys/mman.h>
+//#include <sys/mman.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <assert.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #define handle_error(msg) \
     do { perror(msg); exit(EXIT_FAILURE); } while (0)
 static char *buffer;
 #define METADATA_SIZE 131072 // 17 bit offset, 17 + 17 = 34
 #define PAGE_NUM_BITS 8
+#define TABLEENTRIES 32
+#define DIRECENTRIES 8
 //Bounds table is analagous to a page table. Addresses of these BTs are stored in a Bouds directory.
 //We need a bound table Entry for everay possible pointer in the virtual address space
 //We can do it in bigger chunks. Each page (or bounds) covers 4kb of data. 
@@ -44,6 +47,10 @@ struct bound_t_struct{ /*This structure stores the upper and lower bounds*/
     size_t upper, lower;
 };
 
+struct bound_d_struct{
+    struct bound_t_struct * table_ptr;
+};
+
 size_t get_boundt_number(size_t virtual){
     return (virtual >> PAGE_NUM_BITS);
 }
@@ -55,7 +62,6 @@ size_t shift_bits_20(size_t virtual){
 size_t shift_bits_3(size_t virtual){
     return (virtual >> 3);
 }
-
 
 size_t get_offset_16(size_t virtual){
     size_t mask = 65535;
@@ -96,15 +102,44 @@ size_t getAddr (void * s){
     return int_value;
 }
 
-struct bound_t_struct * create_table(){
-    struct bound_t_struct * res = malloc(sizeof(struct bound_t_struct) * 32);
+struct bound_t_struct * create_table(){ // create a table of 32 128 bit structures that store upper and lower bounds
+    struct bound_t_struct * res = malloc(sizeof(struct bound_t_struct) * TABLEENTRIES);
     return res;
+} //^^^ send this pointer to pkey_mprotect to generate a pkey.
+
+struct bound_d_struct * create_dir(){ // this will create a directory of 8 64 bit structures that store the location of a bound table
+    struct bound_d_struct * res = malloc(sizeof(struct bound_d_struct) * DIRECENTRIES);
+    return res;
+} //^^^ send this pointer to pkey_mprotect to generate a pkey.
+
+void store_bound_t(struct bound_d_struct * dir, struct bound_t_struct * table, size_t loc){
+    //pkeys to allow memory block to be written to (send the pkey along to the function)
+    dir[loc].table_ptr = table;
+    //disable write
+} 
+
+void insert_to_table(struct bound_t_struct * table, size_t loc, size_t upper, size_t lower){
+    //pkeys to allow write, send the pkey along with the function.
+    table[loc].upper = upper;
+    table[loc].lower = lower;
+    //disable write
 }
+
+bool does_table_exist(struct bound_d_struct *dir, size_t loc){
+    if (dir[loc].table_ptr != NULL){
+        return true;
+    }
+    else return false;
+}
+
+//need functions for checking the greater than or less then operator compared to a given data location. (read) also change them (write)
+//intel TSX is used for these (it seems to be implemented in posix threads already)
+
 
 int
 main(int argc, char *argv[])
 {
-    int real_prot = PROT_READ|PROT_WRITE;
+    //int real_prot = PROT_READ|PROT_WRITE;
     //int pkey = pkey_alloc(0, PKEY_DISABLE_WRITE);
     //need to set the pkey?
 
@@ -126,12 +161,9 @@ main(int argc, char *argv[])
     //pkey_set(pkey, PKEY_DISABLE_WRITE);
 
     /*printf("second location: %c\n", ptr[1]);
-
     ptr[0] = 0xF4;
     ptr[1] = 0x25;
-
     printf("second location after assignment: %c\n", ptr[1]);
-
     printf("the location of this memory obect is: %p \n", ptr);*/
 
     //So now lets try to make some pointers and translate them into the metadat table
@@ -151,7 +183,6 @@ main(int argc, char *argv[])
 
     size_t second_chunk = get_bits_3_19(addr);
     printf("The second chunk is: "PRINTF_BINARY_PATTERN_INT64 "\n", PRINTF_BYTE_TO_BINARY_INT64(second_chunk));
-
 
     addr1 = get_offset(addr);
     printf("the offset (8 bytes ) is %d\n", addr1);
