@@ -8,13 +8,13 @@
 #define handle_error(msg) \
     do { perror(msg); exit(EXIT_FAILURE); } while (0)
 static char *buffer;
-#define METADATA_SIZE 131072 // 17 bit offset, 17 + 17 = 34
-#define PAGE_NUM_BITS 8
-#define TABLEENTRIES 32
-#define DIRECENTRIES 8
+#define TABLEENTRIES 125000 // tables are 4mb, 32 bytes means there are 125k entries
+#define DIRECENTRIES 250000000 // statically init 2 gigs for the directory, 4g/8 = 250,000,000 entries
+
+typedef unsigned long long size_t;
+
 //Bounds table is analagous to a page table. Addresses of these BTs are stored in a Bouds directory.
 //We need a bound table Entry for everay possible pointer in the virtual address space
-//We can do it in bigger chunks. Each page (or bounds) covers 4kb of data. 
 
 /* --- PRINTF_BYTE_TO_BINARY macro's --- */
 
@@ -43,33 +43,22 @@ static char *buffer;
     PRINTF_BYTE_TO_BINARY_INT32((i) >> 32), PRINTF_BYTE_TO_BINARY_INT32(i)
 /* --- end macros --- */
 
-struct bound_t_struct{ /*This structure stores the upper and lower bounds*/
-    size_t upper, lower;
+/* These structs represent entries in their respective directory/tables*/
+
+struct bound_t_struct{
+    size_t upper, lower, reserved, pointer_value;
 };
 
 struct bound_d_struct{
     struct bound_t_struct * table_ptr;
 };
 
-size_t get_boundt_number(size_t virtual){
-    return (virtual >> PAGE_NUM_BITS);
-}
-
-size_t shift_bits_20(size_t virtual){
-    return (virtual >> 20);
-}
-
-size_t shift_bits_3(size_t virtual){
-    return (virtual >> 3);
+size_t shift_bits_n(size_t virtual, int n){
+    return (virtual >> n);
 }
 
 size_t get_offset_16(size_t virtual){
     size_t mask = 65535;
-    return virtual & mask;
-}
-
-size_t get_offset(size_t virtual){
-    size_t mask = 255;
     return virtual & mask;
 }
 
@@ -79,23 +68,28 @@ size_t get_offset_27 (size_t virtual){
 }
 
 size_t get_bits_20_47(size_t virtual){
-    size_t res = shift_bits_20(virtual);
+    size_t res = shift_bits_n(virtual, 20);
     res = get_offset_27(res);
     return res;
 }
 
 size_t get_bits_3_19(size_t virtual){
-    size_t res = shift_bits_3(virtual);
+    size_t res = shift_bits_n(virtual, 3);
     res = get_offset_16(res);
     return res;
 }
 
-
-size_t get_bounds_location(size_t virtual){
-    size_t bounds = get_offset(virtual) + get_boundt_number(virtual);
-    return bounds;
+size_t get_offset_3_19(size_t virtual){
+    size_t res = get_bits_3_19(virtual);
+    res = shift_bits_n(res, 5);
+    return res;
 }
 
+size_t get_offset_20_47(size_t virtual){
+    size_t res = get_bits_20_47(virtual);
+    res = shift_bits_n(res, 3);
+    return res;
+}
 
 size_t getAddr (void * s){
     size_t int_value = (size_t)s;
@@ -108,8 +102,8 @@ struct bound_t_struct * create_table(){ // create a table of 32 128 bit structur
 } //^^^ send this pointer to pkey_mprotect to generate a pkey.
 
 struct bound_d_struct * create_dir(){ // this will create a directory of 8 64 bit structures that store the location of a bound table
-    struct bound_d_struct * res = malloc(sizeof(struct bound_d_struct) * DIRECENTRIES);
-    return res;
+    //struct bound_d_struct * res =  mmap(NULL, (sizeof(struct bound_d_struct)) * DIRECENTRIES, prot_set, MAP_SHARED|MAP_ANONYMOUS, -1, 0);
+   // return res;
 } //^^^ send this pointer to pkey_mprotect to generate a pkey.
 
 void store_bound_t(struct bound_d_struct * dir, struct bound_t_struct * table, size_t loc){
@@ -118,10 +112,12 @@ void store_bound_t(struct bound_d_struct * dir, struct bound_t_struct * table, s
     //disable write
 } 
 
-void insert_to_table(struct bound_t_struct * table, size_t loc, size_t upper, size_t lower){
+void insert_to_table(struct bound_t_struct * table, size_t loc, size_t upper, size_t lower, size_t pointer_value, size_t reserved){
     //pkeys to allow write, send the pkey along with the function.
     table[loc].upper = upper;
     table[loc].lower = lower;
+    table[loc].pointer_value = pointer_value;
+    table[loc].reserved = reserved;
     //disable write
 }
 
@@ -174,28 +170,6 @@ main(int argc, char *argv[])
     size_t addr = getAddr(name);
     size_t addr1;
     size_t addr2;
-
-    printf("Location of the derived pointer address is %zu\n", addr);
-    printf("This location in binary form is "PRINTF_BINARY_PATTERN_INT64 "\n", PRINTF_BYTE_TO_BINARY_INT64(addr));
-
-    size_t first_chunk = get_bits_20_47(addr);
-    printf("The first chunk is: "PRINTF_BINARY_PATTERN_INT64 "\n", PRINTF_BYTE_TO_BINARY_INT64(first_chunk));
-
-    size_t second_chunk = get_bits_3_19(addr);
-    printf("The second chunk is: "PRINTF_BINARY_PATTERN_INT64 "\n", PRINTF_BYTE_TO_BINARY_INT64(second_chunk));
-
-    addr1 = get_offset(addr);
-    printf("the offset (8 bytes ) is %d\n", addr1);
-    printf("binary form of the offset is "PRINTF_BINARY_PATTERN_INT64 "\n", PRINTF_BYTE_TO_BINARY_INT64(addr1));
-
-    size_t bound_page_number = get_boundt_number(addr);
-    printf("The result is %zu\n", bound_page_number);
-    printf("binary form of the boundtable number is "PRINTF_BINARY_PATTERN_INT64 "\n", PRINTF_BYTE_TO_BINARY_INT64(bound_page_number));
-
-    
-    size_t corrected_bits = get_offset_16(bound_page_number);
-    printf("The result is %zu\n", corrected_bits);
-    printf("these are the bits masked with the offset removed "PRINTF_BINARY_PATTERN_INT64 "\n", PRINTF_BYTE_TO_BINARY_INT64(corrected_bits));
 
     /*size_t boundlocal = get_bounds_location(addr);
     printf("The result is %zu\n", boundlocal);*/
