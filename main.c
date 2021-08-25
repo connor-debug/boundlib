@@ -1,20 +1,20 @@
 #define _GNU_SOURCE
-//#include <sys/mman.h>
+#include <sys/mman.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <assert.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <errno.h>
 #define handle_error(msg) \
     do { perror(msg); exit(EXIT_FAILURE); } while (0)
 static char *buffer;
 #define TABLEENTRIES 125000 // tables are 4mb, 32 bytes means there are 125k entries
-#define DIRECENTRIES 250000000 // statically init 2 gigs for the directory, 4g/8 = 250,000,000 entries
+#define DIRECENTRIES 250000000 // statically init 2 gigs for the directory, 2g/8 = 250,000,000 entries
 
-typedef unsigned long long size_t;
+//typedef unsigned long long size_t;
 
-//Bounds table is analagous to a page table. Addresses of these BTs are stored in a Bouds directory.
-//We need a bound table Entry for everay possible pointer in the virtual address space
+//We need a bound table Entry for every possible pointer in the virtual address space(2^48)
 
 /* --- PRINTF_BYTE_TO_BINARY macro's --- */
 
@@ -96,14 +96,18 @@ size_t getAddr (void * s){
     return int_value;
 }
 
-struct bound_t_struct * create_table(){ // create a table of 32 128 bit structures that store upper and lower bounds
-    struct bound_t_struct * res = malloc(sizeof(struct bound_t_struct) * TABLEENTRIES);
+int prot_set = PROT_READ | PROT_WRITE;
+
+struct bound_t_struct * create_table(){ // 
+    struct bound_t_struct * res =  mmap(NULL, (sizeof(struct bound_t_struct)) * TABLEENTRIES, prot_set, MAP_SHARED|MAP_ANONYMOUS, 0, 0);
+    perror("Checking for error");
     return res;
 } //^^^ send this pointer to pkey_mprotect to generate a pkey.
 
-struct bound_d_struct * create_dir(){ // this will create a directory of 8 64 bit structures that store the location of a bound table
-    //struct bound_d_struct * res =  mmap(NULL, (sizeof(struct bound_d_struct)) * DIRECENTRIES, prot_set, MAP_SHARED|MAP_ANONYMOUS, -1, 0);
-   // return res;
+struct bound_d_struct * create_dir(){ //
+    struct bound_d_struct * res =  mmap(NULL, (sizeof(struct bound_d_struct)) * DIRECENTRIES, prot_set, MAP_SHARED|MAP_ANONYMOUS, 0, 0);
+    perror("Checking for error");
+    return res;
 } //^^^ send this pointer to pkey_mprotect to generate a pkey.
 
 void store_bound_t(struct bound_d_struct * dir, struct bound_t_struct * table, size_t loc){
@@ -128,7 +132,7 @@ bool does_table_exist(struct bound_d_struct *dir, size_t loc){
     else return false;
 }
 
-//need functions for checking the greater than or less then operator compared to a given data location. (read) also change them (write)
+//need functions for checking the greater than or less then upper/lower bounds
 //intel TSX is used for these (it seems to be implemented in posix threads already)
 
 
@@ -139,13 +143,8 @@ main(int argc, char *argv[])
     //int pkey = pkey_alloc(0, PKEY_DISABLE_WRITE);
     //need to set the pkey?
 
-    struct bound_t_struct test_struct = {145, 567};
-    printf("The size of the test obect is %d", sizeof(test_struct));
-
+    struct bound_d_struct * ptr_direc = create_dir();
     struct bound_t_struct * ptr_table = create_table();
-
-    ptr_table[12].upper = 126;
-    ptr_table[12].lower = 130;
 
     /*char *boundt_ptr, *boundd_ptr;
     boundt_ptr = mmap(NULL, METADATA_SIZE, real_prot, MAP_ANONYMOUS|MAP_PRIVATE, -1, 0);
@@ -156,35 +155,23 @@ main(int argc, char *argv[])
 
     //pkey_set(pkey, PKEY_DISABLE_WRITE);
 
-    /*printf("second location: %c\n", ptr[1]);
-    ptr[0] = 0xF4;
-    ptr[1] = 0x25;
-    printf("second location after assignment: %c\n", ptr[1]);
-    printf("the location of this memory obect is: %p \n", ptr);*/
+    /*Check is a table is at location 30k, no, then store table there and check*/
 
-    //So now lets try to make some pointers and translate them into the metadat table
-    char name [6] = "james";
-    printf("printing string here %s\n", name);
-    printf("Location of the pointer is %p\n", name);
+    bool result = does_table_exist(ptr_direc, 30000);
+    printf("%d\n",result);
 
-    size_t addr = getAddr(name);
-    size_t addr1;
-    size_t addr2;
+    store_bound_t(ptr_direc, ptr_table, 30000);
 
-    /*size_t boundlocal = get_bounds_location(addr);
-    printf("The result is %zu\n", boundlocal);*/
+    bool result2 = does_table_exist(ptr_direc, 30000);
+    printf("%d\n",result2);
 
 
 
-
-   // int err_t = munmap(boundt_ptr, METADATA_SIZE);
-    //int err_d = munmap(boundd_ptr, METADATA_SIZE);
-    //assert(err_t >= 0);
-    //assert(err_d >= 0);
-    free(ptr_table);
-
-
-    //pkey_set(pkey, 0);
-
+    int err_t = munmap(ptr_table, (sizeof(struct bound_t_struct)) * TABLEENTRIES);
+    int err_d = munmap(ptr_direc, (sizeof(struct bound_d_struct)) * DIRECENTRIES);
+    assert(err_t >= 0);
+    assert(err_d >= 0);
+    //free(ptr_table); to free in mmap, you use munmap
+    //free(ptr_direc);
     
 }
